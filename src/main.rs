@@ -1,15 +1,24 @@
+use anyhow::{Context, Result};
 use clap::Parser;
 use prophetbots_cli::*;
+use solana_client::rpc_client::RpcClient;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let cli = TokenCli::parse();
     let token_address = cli.token_address;
 
+    // Load config
+    let cfg = get_config().with_context(|| "Unable to load CLI config")?;
+    let rpc_url = cfg.rpc_url();
+
+    // Create Solana RPC client
+    let client = RpcClient::new(rpc_url);
+
     // Fetch token information concurrently
     let (metadata_res, supply_res) = tokio::join!(
-        fetch_token_metadata(&token_address),
-        fetch_token_supply(&token_address),
+        fetch_token_metadata(&client, &token_address),
+        fetch_token_supply(&client, &token_address),
     );
 
     let metadata = match metadata_res {
