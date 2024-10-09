@@ -60,7 +60,7 @@ pub struct OffChainMetadata {
 // Function to get Metaplex metadata PDA
 fn get_metadata_pda(mint: &Pubkey) -> Pubkey {
     // Construct seeds
-    let metadata_seeds = &[METADATA_SEED, METAPLEX_PROGRAM_ID.as_ref(), &mint.as_ref()];
+    let metadata_seeds = &[METADATA_SEED, METAPLEX_PROGRAM_ID.as_ref(), (mint.as_ref())];
 
     // Get a metaplex pubkey
     let metaplex_pubkey = Pubkey::new_from_array(METAPLEX_PROGRAM_ID.to_bytes());
@@ -71,7 +71,7 @@ fn get_metadata_pda(mint: &Pubkey) -> Pubkey {
 // Function to get token metadata from Solana
 async fn fetch_on_chain_metadata(client: &RpcClient, mint_pubkey: &Pubkey) -> Result<Metadata> {
     // Get Metaplex PDA address from mint account address
-    let metadata_pubkey = get_metadata_pda(&mint_pubkey);
+    let metadata_pubkey = get_metadata_pda(mint_pubkey);
 
     // Fetch on-chain metadata
     let account_data = client
@@ -127,7 +127,7 @@ async fn fetch_dns_records(website: &Option<String>) -> Option<String> {
 pub async fn fetch_token_mintdata(client: &RpcClient, mint_pubkey: &Pubkey) -> Result<Mint> {
     // Fetch on-chain mint account data
     let account_data = client
-        .get_account_data(&mint_pubkey)
+        .get_account_data(mint_pubkey)
         .await
         .with_context(|| "Failed to load mint account data")?;
 
@@ -169,7 +169,7 @@ pub fn pubkey_to_string(pubkey: COption<Pubkey>) -> String {
 
 pub fn string_or_not_available(info_str: Option<String>) -> String {
     if let Some(info_str) = info_str {
-        if info_str.len() > 0 {
+        if !info_str.is_empty() {
             return info_str;
         }
     }
@@ -221,7 +221,7 @@ mod cli_tests {
 
         let result = result.unwrap();
         assert_eq!(result.decimals, 6);
-        assert_eq!(result.is_initialized, true);
+        assert!(result.is_initialized);
 
         // non-mint account
         let test_mint_pubkey =
@@ -240,7 +240,7 @@ mod cli_tests {
         let result = result.unwrap();
         assert_eq!(result.decimals, 0);
         assert_eq!(result.supply, 1);
-        assert_eq!(result.is_initialized, true);
+        assert!(result.is_initialized);
     }
 
     #[tokio::test]
