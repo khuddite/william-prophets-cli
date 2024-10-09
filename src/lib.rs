@@ -13,7 +13,7 @@ use trust_dns_resolver::TokioAsyncResolver;
 use url::Url;
 
 const METADATA_SEED: &[u8; 8] = b"metadata";
-pub const UNAVAILABLE: &str = "Unavailable";
+pub const UNAVAILABLE: &str = "Not available";
 
 #[derive(Parser)]
 #[command(about = "Fetch on/off chain token details", long_about = None)]
