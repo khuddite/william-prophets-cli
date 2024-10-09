@@ -1,3 +1,5 @@
+use std::io::{self, Write};
+
 use anyhow::{Context, Result};
 use clap::Parser;
 use prophetbots_cli::*;
@@ -16,60 +18,58 @@ async fn main() -> Result<()> {
     let client = RpcClient::new(rpc_url);
 
     // Fetch token information concurrently
-    let (metadata_res, supply_res) = tokio::join!(
+    let (metadata_rest, mintdata_res) = tokio::join!(
         fetch_token_metadata(&client, &token_address),
-        fetch_token_supply(&client, &token_address),
+        fetch_token_mintdata(&client, &token_address),
     );
 
-    let metadata = match metadata_res {
-        Ok(metadata) => metadata,
-        Err(err) => {
-            eprintln!("Error fetching metadata: {}", err);
-            return Ok(());
-        }
-    };
+    let (token_name, token_symbol, offchain_data, dns_records) =
+        metadata_rest.with_context(|| "Failed to retrieve token metadata")?;
 
-    let supply = match supply_res {
-        Ok(supply) => supply,
-        Err(err) => {
-            eprintln!("Error fetching supply: {}", err);
-            return Ok(());
-        }
-    };
+    let mintdata = mintdata_res.with_context(|| "Failed to retrieve token mint data")?;
 
-    // Fetch off-chain metadata URI and DNS records concurrently
-    let metadata_uri = metadata.uri.trim_end_matches(char::from(0));
-    let (off_chain_metadata_res, dns_records_res) = tokio::join!(
-        fetch_off_chain_metadata(metadata_uri),
-        fetch_dns_records(metadata_uri)
-    );
-
-    let off_chain_metadata = match off_chain_metadata_res {
-        Ok(data) => data,
-        Err(err) => {
-            eprintln!("Error fetching off-chain metadata: {}", err);
-            return Ok(());
-        }
-    };
-
-    let dns_records = match dns_records_res {
-        Ok(records) => records,
-        Err(err) => {
-            eprintln!("Error fetching DNS records: {}", err);
-            return Ok(());
-        }
-    };
+    let stdout = io::stdout();
+    let mut handle = io::BufWriter::new(stdout);
 
     // Output token information
-    println!("Token Name: {}", off_chain_metadata.name());
-    println!("Token Symbol: {}", off_chain_metadata.symbol());
-    println!("Total Supply: {}", supply);
-    if let Some(website) = off_chain_metadata.website() {
-        println!("Website: {}", website);
-        println!("Number of DNS Records: {}", dns_records);
-    } else {
-        println!("Website: Not available");
-    }
+    writeln!(handle, "Token Name: {}", token_name)?;
+    writeln!(handle, "Token Symbol: {}", token_symbol)?;
+    writeln!(handle, "Total Supply: {}", mintdata.supply)?;
+    writeln!(handle, "Decimals: {}", mintdata.decimals)?;
+    writeln!(
+        handle,
+        "Mint Authority: {}",
+        pubkey_to_string(mintdata.mint_authority)
+    )?;
+
+    writeln!(
+        handle,
+        "Freeze Authority: {}",
+        pubkey_to_string(mintdata.freeze_authority)
+    )?;
+
+    writeln!(
+        handle,
+        "Token Description: {}",
+        offchain_data.description.unwrap_or(UNAVAILABLE.to_string())
+    )?;
+    writeln!(
+        handle,
+        "Token Image: {}",
+        offchain_data.image.unwrap_or(UNAVAILABLE.to_string())
+    )?;
+
+    writeln!(
+        handle,
+        "Token Website: {}",
+        offchain_data.website.unwrap_or(UNAVAILABLE.to_string())
+    )?;
+
+    writeln!(
+        handle,
+        "Number of DNS records: {}",
+        dns_records.unwrap_or(UNAVAILABLE.to_string())
+    )?;
 
     Ok(())
 }

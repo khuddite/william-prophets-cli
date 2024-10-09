@@ -4,6 +4,7 @@ use mpl_token_metadata::accounts::Metadata;
 use mpl_token_metadata::ID as METAPLEX_PROGRAM_ID;
 use serde::{Deserialize, Serialize};
 use solana_client::rpc_client::RpcClient;
+use spl_token::solana_program::program_option::COption;
 use spl_token::solana_program::program_pack::Pack;
 use spl_token::solana_program::pubkey::Pubkey;
 use spl_token::state::Mint;
@@ -12,11 +13,12 @@ use trust_dns_resolver::TokioAsyncResolver;
 use url::Url;
 
 const METADATA_SEED: &[u8; 8] = b"metadata";
+pub const UNAVAILABLE: &str = "Unavailable";
 
 #[derive(Parser)]
 #[command(about = "Fetch on/off chain token details", long_about = None)]
 pub struct TokenCli {
-    /// Solana token mint address
+    /// Solana mint account address
     pub token_address: Pubkey,
 }
 
@@ -47,26 +49,12 @@ pub fn get_config() -> Result<Config> {
     Ok(cfg)
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 pub struct OffChainMetadata {
-    name: String,
-    symbol: String,
+    pub description: Option<String>,
+    pub image: Option<String>,
     #[serde(rename = "external_url")]
-    website: Option<String>,
-}
-
-impl OffChainMetadata {
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn symbol(&self) -> &str {
-        &self.symbol
-    }
-
-    pub fn website(&self) -> &Option<String> {
-        &self.website
-    }
+    pub website: Option<String>,
 }
 
 // Function to get Metaplex metadata PDA
@@ -81,7 +69,7 @@ fn get_metadata_pda(mint: &Pubkey) -> Pubkey {
 }
 
 // Function to get token metadata from Solana
-pub async fn fetch_token_metadata(client: &RpcClient, mint_pubkey: &Pubkey) -> Result<Metadata> {
+pub async fn fetch_on_chain_metadata(client: &RpcClient, mint_pubkey: &Pubkey) -> Result<Metadata> {
     // Get Metaplex PDA address from mint account address
     let metadata_pubkey = get_metadata_pda(&mint_pubkey);
 
@@ -97,8 +85,47 @@ pub async fn fetch_token_metadata(client: &RpcClient, mint_pubkey: &Pubkey) -> R
     Ok(metadata)
 }
 
+// Function to fetch off-chain metadata from a URI
+pub async fn fetch_off_chain_metadata(uri: &str) -> Result<OffChainMetadata> {
+    let uri = uri.trim_end_matches(char::from(0));
+    // Fetch offchain metadata from URI
+    let response = reqwest::get(uri)
+        .await
+        .with_context(|| "Failed to load offchain metadata")?;
+
+    // Parse raw metadata into JSON
+    let offchain_metadata: OffChainMetadata = response
+        .json()
+        .await
+        .with_context(|| "Failed to parse offchain metadata into JSON")?;
+
+    println!("{:?}", offchain_metadata);
+
+    Ok(offchain_metadata)
+}
+
+// Function to fetch number of DNS records from a website
+pub async fn fetch_dns_records(website: &Option<String>) -> Option<String> {
+    if let Some(website) = website {
+        if let Ok(parsed_url) = Url::parse(website) {
+            // Extract domain from website url
+            if let Some(domain) = parsed_url.domain() {
+                let resolver =
+                    TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
+
+                // Look up Ipv4 & Ipv6 DNS records
+                if let Ok(response) = resolver.lookup_ip(domain).await {
+                    return Some(response.iter().count().to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
 // Function to fetch token total supply
-pub async fn fetch_token_supply(client: &RpcClient, mint_pubkey: &Pubkey) -> Result<u64> {
+pub async fn fetch_token_mintdata(client: &RpcClient, mint_pubkey: &Pubkey) -> Result<Mint> {
     // Fetch on-chain mint account data
     let account_data = client
         .get_account_data(&mint_pubkey)
@@ -107,36 +134,34 @@ pub async fn fetch_token_supply(client: &RpcClient, mint_pubkey: &Pubkey) -> Res
     // Parse mint account data into Mint struct
     let mint_info = Mint::unpack(&account_data).with_context(|| "Invalid mint account")?;
 
-    Ok(mint_info.supply)
+    Ok(mint_info)
 }
 
-// Function to fetch off-chain metadata from a URI
-pub async fn fetch_off_chain_metadata(
-    uri: &str,
-) -> Result<OffChainMetadata, Box<dyn std::error::Error>> {
-    // Fetch offchain metadata from URI
-    let response = reqwest::get(uri)
-        .await
-        .with_context(|| "Failed to load offchain metadata")?;
+pub async fn fetch_token_metadata(
+    client: &RpcClient,
+    mint_pubkey: &Pubkey,
+) -> Result<(String, String, OffChainMetadata, Option<String>)> {
+    let metadata = fetch_on_chain_metadata(client, mint_pubkey).await?;
 
-    // Parse raw metadata into JSON
-    let metadata: OffChainMetadata = response
-        .json()
+    // Off-chain metadata is depedent of on-chain metadata (uri), thus this should happen sequentially
+    let offchain_metadata = fetch_off_chain_metadata(&metadata.uri)
         .await
-        .with_context(|| "Failed to parse offchain metadata into JSON")?;
-    Ok(metadata)
+        .unwrap_or(OffChainMetadata::default());
+
+    let dns_records = fetch_dns_records(&offchain_metadata.website).await;
+
+    Ok((
+        metadata.name,
+        metadata.symbol,
+        offchain_metadata,
+        dns_records,
+    ))
 }
 
-// Function to fetch number of DNS records from a website
-pub async fn fetch_dns_records(website: &str) -> Result<usize> {
-    // Extract domain from website url
-    let parsed_url = Url::parse(website)?;
-    let domain = parsed_url.domain().with_context(|| "No domain")?;
-
-    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
-
-    // Look up Ipv4 & Ipv6 DNS records
-    let response = resolver.lookup_ip(domain).await?;
-
-    Ok(response.iter().count())
+pub fn pubkey_to_string(pubkey: COption<Pubkey>) -> String {
+    if pubkey.is_some() {
+        pubkey.unwrap().to_string()
+    } else {
+        UNAVAILABLE.to_string()
+    }
 }
