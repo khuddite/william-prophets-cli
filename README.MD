@@ -1,4 +1,4 @@
-# Solana Token CLI by William Hall
+# Prophets CLI by William Hall
 
 ## 1. Problem to solve
 
