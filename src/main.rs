@@ -1,13 +1,17 @@
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use indicatif::ProgressBar;
 use prophetbots_cli::*;
-use solana_client::rpc_client::RpcClient;
+use solana_client::nonblocking::rpc_client::RpcClient;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = TokenCli::parse();
+    let cli = ProphetsCli::parse();
     let token_address = cli.token_address;
 
     // Load config
@@ -15,7 +19,12 @@ async fn main() -> Result<()> {
     let rpc_url = cfg.rpc_url();
 
     // Create Solana RPC client
-    let client = RpcClient::new(rpc_url);
+    let client = RpcClient::new(rpc_url.to_string());
+
+    // Set up a spinner
+    let bar = ProgressBar::new_spinner();
+    bar.enable_steady_tick(Duration::from_millis(100));
+    bar.set_message("Fetching token details...");
 
     // Fetch token information concurrently
     let (metadata_rest, mintdata_res) = tokio::join!(
@@ -23,10 +32,16 @@ async fn main() -> Result<()> {
         fetch_token_mintdata(&client, &token_address),
     );
 
-    let (token_name, token_symbol, offchain_data, dns_records) =
-        metadata_rest.with_context(|| "Failed to retrieve token metadata")?;
+    bar.finish();
 
-    let mintdata = mintdata_res.with_context(|| "Failed to retrieve token mint data")?;
+    let (token_name, token_symbol, offchain_data, dns_records) =
+        metadata_rest.with_context(|| {
+            "Failed to retrieve token metadata, it's likely because the token address is invalid"
+        })?;
+
+    let mintdata = mintdata_res.with_context(|| {
+        "Failed to retrieve token mint data, it's likely because the token address is invalid"
+    })?;
 
     let stdout = io::stdout();
     let mut handle = io::BufWriter::new(stdout);
@@ -51,29 +66,30 @@ async fn main() -> Result<()> {
     writeln!(
         handle,
         "Token Description: {}",
-        offchain_data.description.unwrap_or(UNAVAILABLE.to_string())
+        string_or_not_available(offchain_data.description)
     )?;
     writeln!(
         handle,
         "Token Image: {}",
-        offchain_data.image.unwrap_or(UNAVAILABLE.to_string())
+        string_or_not_available(offchain_data.image)
     )?;
 
     writeln!(
         handle,
         "Token Website: {}",
-        offchain_data.website.unwrap_or(UNAVAILABLE.to_string())
+        string_or_not_available(offchain_data.website)
     )?;
 
     writeln!(
         handle,
         "Number of DNS records: {}",
-        dns_records.unwrap_or(UNAVAILABLE.to_string())
+        string_or_not_available(dns_records)
     )?;
 
     Ok(())
 }
 
 /*
+EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
 9KgvborfMPc1nzhXe9N8Q9pKTt57YdBWt9VqHnibdqjC
  */
